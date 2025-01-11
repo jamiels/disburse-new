@@ -24,8 +24,8 @@ public class Balance {
     @ManyToOne
     @JoinColumn(name = "stablecoin_id", nullable = false)
     private Stablecoin stablecoin;
-
-    @Column(nullable = false, precision = 20, scale = 8)
+    
+    @Column(nullable = false, precision = 60, scale = 8)
     private BigDecimal balance = BigDecimal.ZERO;
 
     @Column(name = "last_updated", nullable = false, columnDefinition = "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")

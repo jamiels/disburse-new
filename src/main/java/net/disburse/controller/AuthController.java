@@ -1,6 +1,7 @@
 package net.disburse.controller;
 
 import lombok.Getter;
+import lombok.extern.slf4j.Slf4j;
 import net.disburse.dto.AuthResponse;
 import net.disburse.util.JwtUtil;
 import org.springframework.http.ResponseEntity;
@@ -11,6 +12,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {
@@ -28,7 +30,8 @@ public class AuthController {
         Authentication authentication = authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(authRequest.getUsername(), authRequest.getPassword())
         );
-
+        log.info("testing..........");
+        System.out.println("login api hitted");
         String accessToken = jwtUtil.generateToken(authentication.getName(), 1000 * 60 * 60);
         String refreshToken = jwtUtil.generateToken(authentication.getName(), 1000L * 60 * 60 * 24 * 7);
 

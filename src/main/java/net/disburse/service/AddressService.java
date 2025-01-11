@@ -32,17 +32,6 @@ public class AddressService {
     private final TransactionRepository transactionRepository;
     AddressRepository addressRepository;
 
-    private static final Map<String, String> stablecoins = Map.of(
-            "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7",
-            "USDC", "0xA0b86991C6218b36c1d19D4a2e9Eb0cE3606EB48",
-            "BUSD", "0x4fabb145d64652a948d72533023f6e7a623c7c53",
-            "DAI", "0x6B175474E89094C44Da98b954EedeAC495271d0F",
-            "USDD", "0x0A89bF8f1B2a3e6fEA92bDDfD2F5EB064f7fEfFf",
-            "PayPal USD", "0xB547F85E6e2A7dF2cb074d19725eF00bD4Cb2423",
-            "Pax", "0x8e870D67F660D95D5be530380D0eC0bd388289E1",
-            "Gemini Dollar", "0x056Fd409E1d7A124BD7017459dfea2F387b6d5Cd"
-    );
-
     public AddressService(AddressRepository addressRepository, StablecoinRepository stablecoinRepository, BalanceRepository balanceRepository, TransactionRepository transactionRepository) {
         this.addressRepository = addressRepository;
         this.stablecoinRepository = stablecoinRepository;
@@ -88,101 +77,114 @@ public class AddressService {
             return false;
         }
     }
-
+    
     public Map<String, Map<String, String>> savePortfolio(long addressId) {
         Map<String, Map<String, String>> portfolio = new HashMap<>();
-
+        
         HttpClient client = HttpClient.newHttpClient();
         ObjectMapper mapper = new ObjectMapper();
-
-        Address addrFromRepo = addressRepository.findById(addressId).get();
-
+        
+        // Fetch the address details from the database
+        Address addrFromRepo = addressRepository.findById(addressId).orElseThrow(
+                () -> new IllegalArgumentException("Address not found for ID: " + addressId));
+        
         String address = addrFromRepo.getAddress();
         String nickname = addrFromRepo.getNickname();
         Map<String, String> balances = new HashMap<>();
-
-        for (Map.Entry<String, String> coin : stablecoins.entrySet()) {
+        
+        // Fetch stablecoins dynamically from the database
+        List<Stablecoin> stablecoinList = stablecoinRepository.findAll();
+        
+        for (Stablecoin stablecoin : stablecoinList) {
             try {
+                // Etherscan API URL for fetching token balance
                 String url = String.format(
                         "https://api.etherscan.io/api?module=account&action=tokenbalance&contractaddress=%s&address=%s&tag=latest&apikey=%s",
-                        coin.getValue(), address, EtherScan.getApiKey()
+                        stablecoin.getName(), address, EtherScan.getApiKey()
                 );
-
+                
+                // Send HTTP request
                 HttpRequest request = HttpRequest.newBuilder()
                         .uri(URI.create(url))
                         .GET()
                         .build();
-
                 HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
                 JsonNode jsonResponse = mapper.readTree(response.body());
-
+                
+                // Extract and save balance
                 String balance = jsonResponse.get("result").asText();
-                balances.put(coin.getKey(), balance);
-
+                balances.put(stablecoin.getName(), balance);
+                
                 BigDecimal bigBalance = new BigDecimal(balance);
-
-                Stablecoin stablecoin = stablecoinRepository.findByName(coin.getKey());
-
+                
+                // Create or update the Balance entity
                 Balance bal = new Balance();
                 bal.setAddress(addrFromRepo);
                 bal.setBalance(bigBalance);
                 bal.setStablecoin(stablecoin);
                 bal.setLastUpdated(LocalDateTime.now());
-
+                
                 balanceRepository.save(bal);
             } catch (Exception e) {
-                balances.put(coin.getKey(), "Error");
+                balances.put(stablecoin.getName(), "Error");
                 e.printStackTrace();
             }
         }
+        
         portfolio.put(nickname, balances);
-
-
+        
         return portfolio;
     }
-
+    
     public Map<String, Map<String, String>> updatePortfolio() {
         Map<String, Map<String, String>> portfolio = new HashMap<>();
-
+        
         HttpClient client = HttpClient.newHttpClient();
         ObjectMapper mapper = new ObjectMapper();
-
+        
+        // Fetch all addresses from the database
         List<Address> allAddresses = addressRepository.findAll();
-
+        
+        // Fetch all stablecoins dynamically from the database
+        List<Stablecoin> stablecoinList = stablecoinRepository.findAll();
+        
         for (Address addrFromRepo : allAddresses) {
             String address = addrFromRepo.getAddress();
             String nickname = addrFromRepo.getNickname();
             Map<String, String> balances = new HashMap<>();
-
-            for (Map.Entry<String, String> coin : stablecoins.entrySet()) {
+            
+            for (Stablecoin stablecoin : stablecoinList) {
                 try {
+                    // Etherscan API URL for fetching token balance
                     String url = String.format(
                             "https://api.etherscan.io/api?module=account&action=tokenbalance&contractaddress=%s&address=%s&tag=latest&apikey=%s",
-                            coin.getValue(), address, EtherScan.getApiKey()
+                            stablecoin.getName(), address, EtherScan.getApiKey()
                     );
-
+                    
+                    // Send HTTP request
                     HttpRequest request = HttpRequest.newBuilder()
                             .uri(URI.create(url))
                             .GET()
                             .build();
-
                     HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
                     JsonNode jsonResponse = mapper.readTree(response.body());
-
+                    
+                    // Extract and save balance
                     String balance = jsonResponse.get("result").asText();
-                    balances.put(coin.getKey(), balance);
-
+                    balances.put(stablecoin.getName(), balance);
+                    
                     BigDecimal bigBalance = new BigDecimal(balance);
-
-                    Stablecoin stablecoin = stablecoinRepository.findByName(coin.getKey());
-
+                    
+                    // Check if a balance entry already exists
                     Balance existingBalance = balanceRepository.findByAddressAndStablecoin(addrFromRepo, stablecoin);
-
+                    
                     if (existingBalance != null) {
+                        // Update existing balance
                         existingBalance.setBalance(bigBalance);
                         existingBalance.setLastUpdated(LocalDateTime.now());
                         balanceRepository.save(existingBalance);
                     } else {
+                        // Create new balance entry
                         Balance newBalance = new Balance();
                         newBalance.setAddress(addrFromRepo);
                         newBalance.setBalance(bigBalance);
@@ -191,55 +193,65 @@ public class AddressService {
                         balanceRepository.save(newBalance);
                     }
                 } catch (Exception e) {
-                    balances.put(coin.getKey(), "Error");
+                    balances.put(stablecoin.getName(), "Error");
                     e.printStackTrace();
                 }
             }
-
+            
             portfolio.put(nickname, balances);
         }
-
+        
         return portfolio;
     }
-
+    
     public List<Transaction> getLastTransactions(long addressId) {
         Address addrFromRepo = addressRepository.findById(addressId)
                 .orElseThrow(() -> new IllegalArgumentException("Address not found for ID: " + addressId));
-
+        
         String address = addrFromRepo.getAddress();
         HttpClient client = HttpClient.newHttpClient();
         ObjectMapper mapper = new ObjectMapper();
-
+        
         List<Transaction> transactions = new ArrayList<>();
-
+        
         try {
             String url = String.format(
                     "https://api.etherscan.io/api?module=account&action=txlist&address=%s&page=1&offset=20&sort=desc&apikey=%s",
                     address, EtherScan.getApiKey()
             );
-
+            
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(url))
                     .GET()
                     .build();
-
+            
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
             JsonNode jsonResponse = mapper.readTree(response.body());
-
+            
             if ("1".equals(jsonResponse.get("status").asText())) {
                 for (JsonNode txNode : jsonResponse.get("result")) {
+                    String contractAddress = txNode.get("to").asText();
+                    Stablecoin stablecoin = stablecoinRepository.findByName(contractAddress);
+                    
+                    // If the stablecoin doesn't exist, skip this transaction
+                    if (stablecoin == null) continue;
+                    
                     Transaction tx = new Transaction();
                     tx.setTxHash(txNode.get("hash").asText());
                     tx.setAmount(new BigDecimal(txNode.get("value").asText()));
                     tx.setAddress(addrFromRepo);
+                    tx.setStablecoin(stablecoin); // Set the stablecoin
                     tx.setTimestamp(Instant.ofEpochSecond(txNode.get("timeStamp").asLong())
                             .atZone(ZoneId.systemDefault())
                             .toLocalDateTime());
                     tx.setCreatedAt(Instant.ofEpochSecond(txNode.get("timeStamp").asLong())
                             .atZone(ZoneId.systemDefault())
                             .toLocalDateTime());
-
+                    
                     transactions.add(tx);
+                    
+                    // Save transaction to the database
+                    transactionRepository.save(tx);
                 }
             } else {
                 throw new RuntimeException("Failed to fetch transactions: " + jsonResponse.get("message").asText());
@@ -248,19 +260,21 @@ public class AddressService {
             e.printStackTrace();
             throw new RuntimeException("Error while fetching transactions", e);
         }
-
+        
         return transactions;
     }
-
-    public List<Map<String, Object>> getTransactionsFromDb(long address) {
-        Address addrFromRepo = addressRepository.findById(address).get();
-
-        if (addrFromRepo == null) {
-            throw new IllegalArgumentException("Address not found: " + address);
+    
+    public List<Map<String, Object>> getTransactionsFromDb(long addressId, String stablecoinName) {
+        Address addrFromRepo = addressRepository.findById(addressId)
+                .orElseThrow(() -> new IllegalArgumentException("Address not found for ID: " + addressId));
+        
+        Stablecoin stablecoin = stablecoinRepository.findByName(stablecoinName);
+        if (stablecoin == null) {
+            throw new IllegalArgumentException("Stablecoin not found: " + stablecoinName);
         }
-
-        List<Transaction> transactions = transactionRepository.findByAddress(addrFromRepo);
-
+        
+        List<Transaction> transactions = transactionRepository.findByAddressAndStablecoin(addrFromRepo, stablecoin);
+        
         List<Map<String, Object>> transactionDetails = new ArrayList<>();
         for (Transaction transaction : transactions) {
             Map<String, Object> transactionMap = new HashMap<>();
@@ -268,51 +282,75 @@ public class AddressService {
             transactionMap.put("hash", transaction.getTxHash());
             transactionMap.put("timestamp", transaction.getTimestamp());
             transactionMap.put("value", transaction.getAmount());
-
-            Stablecoin stablecoin = transaction.getStablecoin();
-            if (stablecoin != null) {
-                Map<String, String> stablecoinData = new HashMap<>();
-                stablecoinData.put("name", stablecoin.getName());
-                stablecoinData.put("fullName", stablecoin.getFullName());
-                transactionMap.put("stablecoin", stablecoinData);
-            } else {
-                transactionMap.put("stablecoin", null);
-            }
-
+            transactionMap.put("stablecoin", stablecoin.getName());
             transactionDetails.add(transactionMap);
         }
-
+        
         return transactionDetails;
     }
-
+    
+    public List<Map<String, Object>> getAllTransactionsFromDb(long addressId) {
+        Address addrFromRepo = addressRepository.findById(addressId)
+                .orElseThrow(() -> new IllegalArgumentException("Address not found for ID: " + addressId));
+        
+        List<Transaction> transactions = transactionRepository.findByAddress(addrFromRepo);
+        
+        List<Map<String, Object>> transactionDetails = new ArrayList<>();
+        for (Transaction transaction : transactions) {
+            Map<String, Object> transactionMap = new HashMap<>();
+            transactionMap.put("transactionId", transaction.getId());
+            transactionMap.put("hash", transaction.getTxHash());
+            transactionMap.put("timestamp", transaction.getTimestamp());
+            transactionMap.put("value", transaction.getAmount());
+            
+            // Handle the case where Stablecoin is null
+            Stablecoin stablecoin = transaction.getStablecoin();
+            transactionMap.put("stablecoin", stablecoin != null ? stablecoin.getName() : "Unknown");
+            
+            transactionDetails.add(transactionMap);
+        }
+        
+        return transactionDetails;
+    }
+    
+    
     public Address getAddressByAddress(String address) {
         return addressRepository.findByAddress(address);
     }
-
+    
     public List<Map<String, Object>> getAllBalances() {
-        List<Address> addresses = addressRepository.findAll();
-        List<Balance> balances = balanceRepository.findAll();
-
-        List<Map<String, Object>> portfolio = new ArrayList<>();
-        for (Address address : addresses) {
-            Map<String, Object> addressPortfolio = new HashMap<>();
-            addressPortfolio.put("id", address.getId());
-            addressPortfolio.put("address", address.getAddress());
-            addressPortfolio.put("nickname", address.getNickname());
-
-            Map<String, BigDecimal> stablecoinBalances = balances.stream()
-                    .filter(balance -> balance.getAddress().getId().equals(address.getId()))
-                    .sorted(Comparator.comparing(Balance::getLastUpdated).reversed()) // Sort by most recent
-                    .collect(Collectors.toMap(
-                            balance -> balance.getStablecoin().getName(),
-                            Balance::getBalance,
-                            (balance1, balance2) -> balance1 // Keep the most recent based on the sort order
-                    ));
-
-            addressPortfolio.put("balances", stablecoinBalances);
-            portfolio.add(addressPortfolio);
+        // Use a custom query in the BalanceRepository to fetch required data
+        List<Object[]> results = balanceRepository.findAllBalancesWithStablecoins();
+        
+        // Transform query results into structured portfolio data
+        Map<Long, Map<String, Object>> portfolioMap = new HashMap<>();
+        
+        for (Object[] row : results) {
+            Long addressId = (Long) row[0];
+            String address = (String) row[1];
+            String nickname = (String) row[2];
+            String stablecoinName = (String) row[3];
+            BigDecimal balance = (BigDecimal) row[4];
+            
+            // Create or update the address portfolio
+            portfolioMap.computeIfAbsent(addressId, id -> {
+                Map<String, Object> portfolio = new HashMap<>();
+                portfolio.put("id", addressId);
+                portfolio.put("address", address);
+                portfolio.put("nickname", nickname);
+                portfolio.put("balances", new HashMap<String, BigDecimal>());
+                return portfolio;
+            });
+            
+            // Add balance to the existing portfolio entry
+            Map<String, BigDecimal> balances = (Map<String, BigDecimal>) portfolioMap.get(addressId).get("balances");
+            balances.put(stablecoinName, balance);
         }
-
-        return portfolio;
+        
+        return new ArrayList<>(portfolioMap.values());
     }
+    public List<Stablecoin> getAllStablecoins() {
+        return stablecoinRepository.findAll();
+    }
+    
 }
